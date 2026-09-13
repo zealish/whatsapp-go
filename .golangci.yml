@@ -1,0 +1,25 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: unused-parameter
+          disabled: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

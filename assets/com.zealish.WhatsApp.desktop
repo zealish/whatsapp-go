@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=WhatsApp
+GenericName=Messenger
+Comment=Native WhatsApp Web client for Linux
+Exec=zealish-wa
+Icon=com.zealish.WhatsApp
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupNotify=true
+StartupWMClass=com.zealish.WhatsApp
+Keywords=whatsapp;chat;messaging;

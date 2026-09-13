@@ -1,0 +1,37 @@
+app-id: com.zealish.WhatsApp
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+command: zealish-wa
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-download
+
+modules:
+  - name: zealish-wa
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      env:
+        GOFLAGS: -trimpath
+        CGO_ENABLED: '1'
+    build-commands:
+      - go build -ldflags "-s -w" -o zealish-wa ./cmd/app
+      - install -Dm0755 zealish-wa /app/bin/zealish-wa
+      - install -Dm0644 assets/com.zealish.WhatsApp.desktop
+        /app/share/applications/com.zealish.WhatsApp.desktop
+      - install -Dm0644 assets/icon.svg
+        /app/share/icons/hicolor/scalable/apps/com.zealish.WhatsApp.svg
+    sources:
+      - type: dir
+        path: ../..
