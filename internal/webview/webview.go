@@ -105,8 +105,8 @@ func installTitleExtension(profile string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("webview: create title extension: %w", err)
 	}
-	manifest := `{"manifest_version":3,"name":"WhatsApp title","version":"1.0","content_scripts":[{"matches":["https://web.whatsapp.com/*"],"js":["title.js"],"run_at":"document_start"}]}`
-	script := `document.title = "WhatsApp"; new MutationObserver(function(){ if (document.title !== "WhatsApp") document.title = "WhatsApp"; }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});`
+	manifest := `{"manifest_version":3,"name":"WhatsApp title","version":"1.0","content_scripts":[{"matches":["https://web.whatsapp.com/*"],"js":["title.js"],"run_at":"document_start","world":"MAIN"}]}`
+	script := `(function(){var title="WhatsApp";var proto=Document.prototype;var desc=Object.getOwnPropertyDescriptor(proto,"title");if(desc&&desc.set){Object.defineProperty(proto,"title",{configurable:true,enumerable:desc.enumerable,get:desc.get,set:function(){desc.set.call(this,title)}})}function force(){try{if(document.title!==title)document.title=title}catch(e){}}force();new MutationObserver(force).observe(document,{subtree:true,childList:true,characterData:true});setInterval(force,250)})();`
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		return fmt.Errorf("webview: write title manifest: %w", err)
 	}
