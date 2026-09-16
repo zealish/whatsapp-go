@@ -383,7 +383,7 @@ static void zw_on_activate(GtkApplication *application, gpointer user_data)
     webkit_settings_set_enable_smooth_scrolling(settings, TRUE);
     webkit_settings_set_enable_back_forward_navigation_gestures(settings, FALSE);
     webkit_settings_set_media_playback_requires_user_gesture(settings, FALSE);
-    webkit_settings_set_user_agent_with_application_details(settings, "ZealishWhatsApp", "1.0");
+    webkit_settings_set_user_agent(settings, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36");
     g_signal_connect(app->web_view, "decide-policy", G_CALLBACK(zw_on_decide_policy), app);
     g_signal_connect(app->web_view, "show-notification", G_CALLBACK(zw_on_show_notification), app);
     g_signal_connect(app->web_view, "permission-request", G_CALLBACK(zw_on_permission_request), app);
