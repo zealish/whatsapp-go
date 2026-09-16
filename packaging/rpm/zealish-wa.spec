@@ -9,16 +9,14 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  golang >= 1.25
 BuildRequires:  gcc
-BuildRequires:  pkgconfig(gtk4)
-BuildRequires:  pkgconfig(webkitgtk-6.0)
-Requires:       gtk4
-Requires:       webkitgtk6.0
+BuildRequires:  xdotool
+Requires:       google-chrome-stable
+Requires:       xdotool
 Requires:       xdg-utils
 
 %description
-Desktop client for WhatsApp Web built on Go, GTK4 and WebKitGTK. It embeds the
-official WhatsApp Web interface in the system web engine instead of bundling a
-browser, keeping memory use and startup time close to a native application.
+Desktop client for WhatsApp Web built on Go with a dedicated Chromium app window.
+Chromium provides the WebRTC engine required for WhatsApp voice and video calls.
 
 %prep
 %autosetup

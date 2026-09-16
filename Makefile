@@ -32,6 +32,7 @@ install: build
 	install -Dm0755 bin/$(BINARY) $(DESTDIR)$(PREFIX)/bin/$(BINARY)
 	install -Dm0644 assets/$(APPID).desktop $(DESTDIR)$(PREFIX)/share/applications/$(APPID).desktop
 	install -Dm0644 assets/icon.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/$(APPID).svg
+	@command -v google-chrome >/dev/null || command -v chromium >/dev/null || { echo "error: Google Chrome or Chromium is required at runtime" >&2; exit 1; }
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(BINARY)

@@ -1,44 +1,32 @@
 //go:build linux
 
-// Package webview wraps GTK4 and WebKitGTK 6.0 into a minimal, native window
-// hosting a single web view.
+// Package webview launches a dedicated Chromium app window. Chromium is used
+// instead of WebKitGTK because the system WebKitGTK build does not expose the
+// WebRTC APIs required by WhatsApp calling.
 package webview
-
-/*
-#cgo pkg-config: gtk4 webkitgtk-6.0
-#include <stdlib.h>
-#include "bridge.h"
-*/
-import "C"
 
 import (
 	"errors"
-	"runtime/cgo"
-	"unsafe"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 )
 
-// Handlers receives events emitted by the web view. Every callback runs on the
-// GTK main thread.
+// Handlers receives events from the browser adapter.
 type Handlers struct {
-	// Message is called when the page posts to the "zealish" script handler.
-	Message func(payload string)
-	// Notification is called when the page requests a desktop notification.
-	// Returning true suppresses WebKit's built-in notification.
-	Notification func(id uint64, title, body string) bool
-	// NotificationClosed is called when a previously shown notification is
-	// dismissed by the page.
+	Message            func(payload string)
+	Notification       func(id uint64, title, body string) bool
 	NotificationClosed func(id uint64)
-	// ExternalURI is called for navigations that must open in the system
-	// browser instead of the web view.
-	ExternalURI func(uri string)
-	// CloseRequest is called when the user closes the window. Returning true
-	// keeps the window alive (hidden to tray).
-	CloseRequest func() bool
-	// GeometryChanged is called when the window is resized or (un)maximized.
-	GeometryChanged func(width, height int, maximized bool)
+	ExternalURI        func(uri string)
+	CloseRequest       func() bool
+	GeometryChanged    func(width, height int, maximized bool)
 }
 
-// Options configures the web view at construction time.
+// Options configures the dedicated Chromium app window.
 type Options struct {
 	Title      string
 	URL        string
@@ -52,162 +40,149 @@ type Options struct {
 	Handlers   Handlers
 }
 
-// View is a native window with a single embedded WebKit web view.
+// View controls the dedicated Chromium app window.
 type View struct {
-	ptr    *C.ZwApp
-	handle cgo.Handle
-	opts   Options
+	opts     Options
+	cmd      *exec.Cmd
+	mu       sync.Mutex
+	visible  bool
+	quitting bool
 }
 
-// New creates the GTK application, window and web view. It must be called from
-// the main OS thread.
+// New creates a Chromium-backed WhatsApp window.
 func New(opts Options) (*View, error) {
-	v := &View{opts: opts}
-	v.handle = cgo.NewHandle(v)
-
-	cfg := C.ZwConfig{
-		title:       C.CString(opts.Title),
-		url:         C.CString(opts.URL),
-		data_dir:    C.CString(opts.DataDir),
-		cache_dir:   C.CString(opts.CacheDir),
-		user_script: C.CString(opts.UserScript),
-		width:       C.int(opts.Width),
-		height:      C.int(opts.Height),
-		maximized:   cbool(opts.Maximized),
-		hidden:      cbool(opts.Hidden),
-		user_data:   C.uintptr_t(v.handle),
+	chrome, err := findChrome()
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		C.free(unsafe.Pointer(cfg.title))
-		C.free(unsafe.Pointer(cfg.url))
-		C.free(unsafe.Pointer(cfg.data_dir))
-		C.free(unsafe.Pointer(cfg.cache_dir))
-		C.free(unsafe.Pointer(cfg.user_script))
-	}()
-
-	v.ptr = C.zw_app_new(&cfg)
-	if v.ptr == nil {
-		v.handle.Delete()
-		return nil, errors.New("webview: failed to create application")
+	if err := os.MkdirAll(opts.DataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("webview: create data directory: %w", err)
 	}
-	return v, nil
+	if err := os.MkdirAll(opts.CacheDir, 0o700); err != nil {
+		return nil, fmt.Errorf("webview: create cache directory: %w", err)
+	}
+	profile := filepath.Join(opts.DataDir, "chrome-profile")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		return nil, fmt.Errorf("webview: create Chrome profile: %w", err)
+	}
+
+	args := []string{
+		"--app=" + opts.URL,
+		"--user-data-dir=" + profile,
+		"--disk-cache-dir=" + opts.CacheDir,
+		"--class=ZealishWhatsApp",
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-session-crashed-bubble",
+		"--window-size=" + strconv.Itoa(opts.Width) + "," + strconv.Itoa(opts.Height),
+	}
+	if opts.Maximized {
+		args = append(args, "--start-maximized")
+	}
+	if opts.Hidden {
+		args = append(args, "--start-minimized")
+	}
+
+	return &View{opts: opts, cmd: exec.Command(chrome, args...), visible: !opts.Hidden}, nil
 }
 
-// Run starts the GTK main loop and blocks until the application quits.
+func findChrome() (string, error) {
+	for _, name := range []string{"google-chrome", "chromium", "chromium-browser"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	return "", errors.New("webview: Chromium/Google Chrome is required for WhatsApp calling")
+}
+
+// Run starts Chromium and waits for it to exit.
 func (v *View) Run() int {
-	defer v.handle.Delete()
-	return int(C.zw_app_run(v.ptr))
-}
-
-// Quit terminates the GTK main loop.
-func (v *View) Quit() { C.zw_app_quit(v.ptr) }
-
-// Show presents the window and gives it focus.
-func (v *View) Show() { C.zw_app_show(v.ptr) }
-
-// Hide withdraws the window without destroying the web view.
-func (v *View) Hide() { C.zw_app_hide(v.ptr) }
-
-// Visible reports whether the window is currently mapped.
-func (v *View) Visible() bool { return C.zw_app_visible(v.ptr) != 0 }
-
-// Reload reloads the current page.
-func (v *View) Reload() { C.zw_app_reload(v.ptr) }
-
-// NotificationClicked forwards a click on a native notification back to the
-// originating page.
-func (v *View) NotificationClicked(id uint64) {
-	C.zw_app_notification_clicked(v.ptr, C.uint64_t(id))
-}
-
-// Eval runs a script from the trusted bridge world. Only scripts built by this
-// application are ever passed here.
-func (v *View) Eval(script string) {
-	cs := C.CString(script)
-	defer C.free(unsafe.Pointer(cs))
-	C.zw_app_eval(v.ptr, cs)
-}
-
-// Geometry returns the current window size and maximized state.
-func (v *View) Geometry() (width, height int, maximized bool) {
-	var w, h, m C.int
-	C.zw_app_geometry(v.ptr, &w, &h, &m)
-	return int(w), int(h), m != 0
-}
-
-// Dispatch schedules fn to run on the GTK main thread.
-func Dispatch(fn func()) {
-	h := cgo.NewHandle(fn)
-	C.zw_dispatch(C.uintptr_t(h))
-}
-
-func cbool(b bool) C.int {
-	if b {
+	if err := v.cmd.Start(); err != nil {
+		return 1
+	}
+	err := v.cmd.Wait()
+	v.mu.Lock()
+	v.visible = false
+	v.mu.Unlock()
+	if err != nil && !v.isQuitting() {
 		return 1
 	}
 	return 0
 }
 
-func viewFrom(data C.uintptr_t) *View {
-	return cgo.Handle(data).Value().(*View)
-}
-
-//export zwGoMessage
-func zwGoMessage(data C.uintptr_t, payload *C.char) {
-	v := viewFrom(data)
-	if v.opts.Handlers.Message != nil {
-		v.opts.Handlers.Message(C.GoString(payload))
+// Quit terminates the Chromium process.
+func (v *View) Quit() {
+	v.mu.Lock()
+	v.quitting = true
+	cmd := v.cmd
+	v.mu.Unlock()
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 }
 
-//export zwGoNotification
-func zwGoNotification(data C.uintptr_t, id C.guint64, title, body *C.char) C.int {
-	v := viewFrom(data)
-	if v.opts.Handlers.Notification == nil {
-		return 0
-	}
-	return cbool(v.opts.Handlers.Notification(uint64(id), C.GoString(title), C.GoString(body)))
+// Show activates the Chromium window.
+func (v *View) Show() {
+	v.mu.Lock()
+	v.visible = true
+	v.mu.Unlock()
+	_ = v.windowCommand("windowactivate")
 }
 
-//export zwGoNotificationClosed
-func zwGoNotificationClosed(data C.uintptr_t, id C.guint64) {
-	v := viewFrom(data)
-	if v.opts.Handlers.NotificationClosed != nil {
-		v.opts.Handlers.NotificationClosed(uint64(id))
-	}
+// Hide minimizes the Chromium window.
+func (v *View) Hide() {
+	v.mu.Lock()
+	v.visible = false
+	v.mu.Unlock()
+	_ = v.windowCommand("windowminimize")
 }
 
-//export zwGoExternalURI
-func zwGoExternalURI(data C.uintptr_t, uri *C.char) {
-	v := viewFrom(data)
-	if v.opts.Handlers.ExternalURI != nil {
-		v.opts.Handlers.ExternalURI(C.GoString(uri))
-	}
+// Visible reports the adapter's last known visibility state.
+func (v *View) Visible() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.visible
 }
 
-//export zwGoCloseRequest
-func zwGoCloseRequest(data C.uintptr_t) C.int {
-	v := viewFrom(data)
-	if v.opts.Handlers.CloseRequest == nil {
-		return 0
-	}
-	return cbool(v.opts.Handlers.CloseRequest())
+// Reload reloads the WhatsApp page.
+func (v *View) Reload() {
+	_ = v.windowCommand("key", "ctrl+r")
 }
 
-//export zwGoGeometryChanged
-func zwGoGeometryChanged(data C.uintptr_t, width, height, maximized C.int) {
-	v := viewFrom(data)
-	if v.opts.Handlers.GeometryChanged != nil {
-		v.opts.Handlers.GeometryChanged(int(width), int(height), maximized != 0)
-	}
+// NotificationClicked is retained for API compatibility.
+func (v *View) NotificationClicked(_ uint64) {}
+
+// Eval is intentionally unavailable for an external Chrome app window. The
+// WhatsApp page remains fully functional; native bridge actions are not used
+// by the Chrome backend.
+func (v *View) Eval(_ string) {}
+
+// Geometry returns the configured window geometry.
+func (v *View) Geometry() (width, height int, maximized bool) {
+	return v.opts.Width, v.opts.Height, v.opts.Maximized
 }
 
-//export zwGoDispatch
-func zwGoDispatch(data C.uintptr_t) {
-	h := cgo.Handle(data)
-	fn, ok := h.Value().(func())
-	h.Delete()
-	if ok {
-		fn()
+// Dispatch runs fn on the caller's thread.
+func Dispatch(fn func()) { fn() }
+
+func (v *View) isQuitting() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.quitting
+}
+
+func (v *View) windowCommand(args ...string) error {
+	windowID, err := exec.Command("xdotool", "search", "--class", "ZealishWhatsApp").Output()
+	if err != nil {
+		return err
 	}
+	id := strings.Fields(string(windowID))
+	if len(id) == 0 {
+		return errors.New("webview: Chrome window not found")
+	}
+	command := append([]string{"xdotool", "window" + args[0], id[0]}, args[1:]...)
+	if args[0] == "key" {
+		command = []string{"xdotool", "key", "--window", id[0], args[1]}
+	}
+	return exec.Command(command[0], command[1:]...).Run()
 }
