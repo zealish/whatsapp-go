@@ -131,7 +131,10 @@ static gboolean zw_on_permission_request(WebKitWebView *web_view,
     (void)web_view;
     (void)user_data;
 
-    if (WEBKIT_IS_NOTIFICATION_PERMISSION_REQUEST(request)) {
+    if (WEBKIT_IS_NOTIFICATION_PERMISSION_REQUEST(request) ||
+        WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST(request) ||
+        WEBKIT_IS_DEVICE_INFO_PERMISSION_REQUEST(request) ||
+        WEBKIT_IS_CLIPBOARD_PERMISSION_REQUEST(request)) {
         webkit_permission_request_allow(request);
         return TRUE;
     }
@@ -170,6 +173,166 @@ static void zw_on_notify_geometry(GObject *object, GParamSpec *pspec, gpointer u
     (void)object;
     (void)pspec;
     zw_report_geometry((ZwApp *)user_data);
+}
+
+static void zw_report_geometry(ZwApp *app);
+static void zw_on_texture_read_finish(GObject *source_object, GAsyncResult *res, gpointer user_data)
+{
+    GdkClipboard *clipboard = GDK_CLIPBOARD(source_object);
+    ZwApp *app = (ZwApp *)user_data;
+    GError *error = NULL;
+
+    GdkTexture *texture = gdk_clipboard_read_texture_finish(clipboard, res, &error);
+    if (!texture) {
+        if (error != NULL)
+            g_error_free(error);
+        return;
+    }
+
+    GBytes *bytes = gdk_texture_save_to_png_bytes(texture);
+    g_object_unref(texture);
+    if (!bytes)
+        return;
+
+    gsize size = 0;
+    gconstpointer data = g_bytes_get_data(bytes, &size);
+    char *b64 = g_base64_encode((const guchar *)data, size);
+    g_bytes_unref(bytes);
+
+    GString *js = g_string_new(NULL);
+    g_string_append_printf(js,
+        "(function() {"
+        "  try {"
+        "    const b64 = '%s';"
+        "    if (window.__zealish && typeof window.__zealish.pasteImage === 'function') {"
+        "      window.__zealish.pasteImage(b64);"
+        "      return;"
+        "    }"
+        "    const bin = atob(b64);"
+        "    const len = bin.length;"
+        "    const bytes = new Uint8Array(len);"
+        "    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);"
+        "    const blob = new Blob([bytes], {type: 'image/png'});"
+        "    const file = new File([blob], 'screenshot.png', {type: 'image/png', lastModified: Date.now()});"
+        "    const dt = new DataTransfer();"
+        "    dt.items.add(file);"
+        "    const ev = new ClipboardEvent('paste', {"
+        "      bubbles: true,"
+        "      cancelable: true,"
+        "      clipboardData: dt"
+        "    });"
+        "    const target = document.activeElement || document.querySelector('[contenteditable=\"true\"]') || document.body;"
+        "    target.dispatchEvent(ev);"
+        "  } catch (e) {"
+        "    console.error('zealish paste error:', e);"
+        "  }"
+        "})();", b64);
+    g_free(b64);
+
+    if (app->web_view != NULL) {
+        webkit_web_view_evaluate_javascript(app->web_view, js->str, -1, NULL, NULL, NULL, NULL, NULL);
+    }
+    g_string_free(js, TRUE);
+}
+
+static gboolean zw_clipboard_has_image(GdkClipboard *clipboard)
+{
+    if (clipboard == NULL)
+        return FALSE;
+
+    GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
+    if (formats == NULL)
+        return FALSE;
+
+    return gdk_content_formats_contain_gtype(formats, GDK_TYPE_TEXTURE) ||
+           gdk_content_formats_contain_mime_type(formats, "image/png") ||
+           gdk_content_formats_contain_mime_type(formats, "image/jpeg") ||
+           gdk_content_formats_contain_mime_type(formats, "image/bmp") ||
+           gdk_content_formats_contain_mime_type(formats, "image/tiff");
+}
+
+static void zw_trigger_paste_image(ZwApp *app)
+{
+    if (app->window == NULL || app->web_view == NULL)
+        return;
+
+    GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(app->window));
+    if (display == NULL)
+        return;
+
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    if (clipboard != NULL) {
+        gdk_clipboard_read_texture_async(clipboard, NULL, zw_on_texture_read_finish, app);
+    }
+}
+
+static gboolean zw_on_key_pressed(GtkEventControllerKey *controller,
+                                  guint keyval,
+                                  guint keycode,
+                                  GdkModifierType state,
+                                  gpointer user_data)
+{
+    (void)controller;
+    (void)keycode;
+    ZwApp *app = (ZwApp *)user_data;
+    gboolean is_ctrl = (state & GDK_CONTROL_MASK) != 0;
+    if (is_ctrl && (keyval == GDK_KEY_v || keyval == GDK_KEY_V)) {
+        if (app->window != NULL) {
+            GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(app->window));
+            if (display != NULL) {
+                GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+                if (zw_clipboard_has_image(clipboard)) {
+                    zw_trigger_paste_image(app);
+                    return TRUE;
+                }
+            }
+        }
+    }
+    return FALSE;
+}
+
+static void zw_on_custom_paste_action(GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+    (void)action;
+    (void)parameter;
+    ZwApp *app = (ZwApp *)user_data;
+    zw_trigger_paste_image(app);
+}
+
+static gboolean zw_on_context_menu(WebKitWebView *web_view,
+                                   WebKitContextMenu *context_menu,
+                                   WebKitHitTestResult *hit_test_result,
+                                   gpointer user_data)
+{
+    (void)web_view;
+    (void)hit_test_result;
+    ZwApp *app = (ZwApp *)user_data;
+
+    if (app->window == NULL)
+        return FALSE;
+
+    GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(app->window));
+    if (display == NULL)
+        return FALSE;
+
+    GdkClipboard *clipboard = gdk_display_get_clipboard(display);
+    if (zw_clipboard_has_image(clipboard)) {
+        GList *items = webkit_context_menu_get_items(context_menu);
+        for (GList *l = items; l != NULL; l = l->next) {
+            WebKitContextMenuItem *item = WEBKIT_CONTEXT_MENU_ITEM(l->data);
+            if (webkit_context_menu_item_get_stock_action(item) == WEBKIT_CONTEXT_MENU_ACTION_PASTE) {
+                GAction *act = g_action_map_lookup_action(G_ACTION_MAP(app->window), "paste-image");
+                if (act != NULL) {
+                    WebKitContextMenuItem *new_item =
+                        webkit_context_menu_item_new_from_gaction(act, "Paste", NULL);
+                    webkit_context_menu_insert(context_menu, new_item, g_list_position(items, l));
+                    webkit_context_menu_remove(context_menu, item);
+                }
+                break;
+            }
+        }
+    }
+    return FALSE;
 }
 
 static void zw_on_activate(GtkApplication *application, gpointer user_data)
@@ -212,20 +375,33 @@ static void zw_on_activate(GtkApplication *application, gpointer user_data)
     webkit_settings_set_enable_developer_extras(settings, FALSE);
     webkit_settings_set_enable_html5_database(settings, TRUE);
     webkit_settings_set_enable_html5_local_storage(settings, TRUE);
+    webkit_settings_set_enable_webrtc(settings, TRUE);
     webkit_settings_set_enable_media_stream(settings, TRUE);
+    webkit_settings_set_enable_webaudio(settings, TRUE);
+    webkit_settings_set_enable_media_capabilities(settings, TRUE);
+    webkit_settings_set_javascript_can_access_clipboard(settings, TRUE);
     webkit_settings_set_enable_smooth_scrolling(settings, TRUE);
     webkit_settings_set_enable_back_forward_navigation_gestures(settings, FALSE);
     webkit_settings_set_media_playback_requires_user_gesture(settings, FALSE);
-
+    webkit_settings_set_user_agent_with_application_details(settings, "ZealishWhatsApp", "1.0");
     g_signal_connect(app->web_view, "decide-policy", G_CALLBACK(zw_on_decide_policy), app);
     g_signal_connect(app->web_view, "show-notification", G_CALLBACK(zw_on_show_notification), app);
     g_signal_connect(app->web_view, "permission-request", G_CALLBACK(zw_on_permission_request), app);
+    g_signal_connect(app->web_view, "context-menu", G_CALLBACK(zw_on_context_menu), app);
 
     app->window = GTK_WINDOW(gtk_application_window_new(application));
     gtk_window_set_title(app->window, app->title);
     gtk_window_set_default_size(app->window, app->width, app->height);
     gtk_window_set_child(app->window, GTK_WIDGET(app->web_view));
 
+    GSimpleAction *paste_act = g_simple_action_new("paste-image", NULL);
+    g_signal_connect(paste_act, "activate", G_CALLBACK(zw_on_custom_paste_action), app);
+    g_action_map_add_action(G_ACTION_MAP(app->window), G_ACTION(paste_act));
+
+    GtkEventController *key_ctrl = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
+    g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(zw_on_key_pressed), app);
+    gtk_widget_add_controller(GTK_WIDGET(app->window), key_ctrl);
     g_signal_connect(app->window, "close-request", G_CALLBACK(zw_on_close_request), app);
     g_signal_connect(app->window, "notify::default-width",
                      G_CALLBACK(zw_on_notify_geometry), app);

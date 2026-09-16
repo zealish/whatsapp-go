@@ -98,6 +98,35 @@
       if (target) {
         target.click();
       }
+    },
+    pasteImage: function (base64Data) {
+      try {
+        var binary = atob(base64Data);
+        var len = binary.length;
+        var bytes = new Uint8Array(len);
+        for (var i = 0; i < len; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        var blob = new Blob([bytes], { type: "image/png" });
+        var file = new File([blob], "screenshot.png", {
+          type: "image/png",
+          lastModified: Date.now()
+        });
+        var dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        var pasteEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        var target =
+          document.activeElement ||
+          document.querySelector('[contenteditable="true"]') ||
+          document.body;
+        target.dispatchEvent(pasteEvent);
+      } catch (err) {
+        console.error("zealish pasteImage error:", err);
+      }
     }
   };
 
