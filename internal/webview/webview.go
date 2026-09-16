@@ -66,12 +66,16 @@ func New(opts Options) (*View, error) {
 	if err := os.MkdirAll(profile, 0o700); err != nil {
 		return nil, fmt.Errorf("webview: create Chrome profile: %w", err)
 	}
+	if err := installTitleExtension(profile); err != nil {
+		return nil, err
+	}
 
 	args := []string{
 		"--app=" + opts.URL,
 		"--user-data-dir=" + profile,
 		"--disk-cache-dir=" + opts.CacheDir,
 		"--class=ZealishWhatsApp",
+		"--load-extension=" + filepath.Join(profile, "title-extension"),
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-session-crashed-bubble",
@@ -94,6 +98,22 @@ func findChrome() (string, error) {
 		}
 	}
 	return "", errors.New("webview: Chromium/Google Chrome is required for WhatsApp calling")
+}
+
+func installTitleExtension(profile string) error {
+	dir := filepath.Join(profile, "title-extension")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("webview: create title extension: %w", err)
+	}
+	manifest := `{"manifest_version":3,"name":"WhatsApp title","version":"1.0","content_scripts":[{"matches":["https://web.whatsapp.com/*"],"js":["title.js"],"run_at":"document_start"}]}`
+	script := `document.title = "WhatsApp"; new MutationObserver(function(){ if (document.title !== "WhatsApp") document.title = "WhatsApp"; }).observe(document.documentElement, {subtree:true, childList:true, characterData:true});`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600); err != nil {
+		return fmt.Errorf("webview: write title manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "title.js"), []byte(script), 0o600); err != nil {
+		return fmt.Errorf("webview: write title script: %w", err)
+	}
+	return nil
 }
 
 // Run starts Chromium and waits for it to exit.
