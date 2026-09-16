@@ -74,7 +74,7 @@ func New(opts Options) (*View, error) {
 		"--app=" + opts.URL,
 		"--user-data-dir=" + profile,
 		"--disk-cache-dir=" + opts.CacheDir,
-		"--class=ZealishWhatsApp",
+		"--class=WhatsApp",
 		"--ozone-platform=x11",
 		"--load-extension=" + filepath.Join(profile, "title-extension"),
 		"--no-first-run",
@@ -206,7 +206,7 @@ func (v *View) setWindowTitle() {
 }
 
 func (v *View) windowCommand(args ...string) error {
-	windowID, err := exec.Command("xdotool", "search", "--class", "ZealishWhatsApp").Output()
+	windowID, err := exec.Command("xdotool", "search", "--class", "WhatsApp").Output()
 	if err != nil {
 		return err
 	}
