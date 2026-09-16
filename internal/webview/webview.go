@@ -78,7 +78,7 @@ func New(opts Options) (*View, error) {
 		"--ozone-platform=x11",
 		"--load-extension=" + filepath.Join(profile, "title-extension"),
 		"--disable-extensions-except=" + filepath.Join(profile, "title-extension"),
-		"--app=" + opts.URL + "?zealish_title=WhatsApp",
+		"--app=" + opts.URL,
 		"--disable-session-crashed-bubble",
 		"--window-size=" + strconv.Itoa(opts.Width) + "," + strconv.Itoa(opts.Height),
 	}
@@ -107,7 +107,7 @@ func installTitleExtension(profile string) error {
 		return fmt.Errorf("webview: create title extension: %w", err)
 	}
 	manifest := `{"manifest_version":3,"name":"WhatsApp title","version":"1.0","content_scripts":[{"matches":["https://web.whatsapp.com/*"],"js":["title.js"],"run_at":"document_start","world":"MAIN"}]}`
-	script := `(function(){var title="WhatsApp";function force(){try{document.title=title;var t=document.querySelector("title");if(t)t.textContent=title}catch(e){}}force();new MutationObserver(force).observe(document.documentElement||document,{subtree:true,childList:true,characterData:true});setInterval(force,100)})();`
+	script := `(function(){var title="WhatsApp";function force(){try{var t=document.querySelector("title");if(t)t.textContent=title;document.title=title}catch(e){}}force();new MutationObserver(force).observe(document.documentElement||document,{subtree:true,childList:true,characterData:true});setInterval(force,100)})();`
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		return fmt.Errorf("webview: write title manifest: %w", err)
 	}
