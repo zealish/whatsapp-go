@@ -174,12 +174,13 @@ func (v *View) isQuitting() bool {
 }
 
 func (v *View) setWindowTitle() {
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := v.windowCommand("set_window", "--name", "WhatsApp"); err == nil {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		if v.isQuitting() || v.cmd.ProcessState != nil {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		_ = v.windowCommand("set_window", "--name", "WhatsApp")
 	}
 }
 
