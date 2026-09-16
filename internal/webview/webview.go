@@ -75,6 +75,7 @@ func New(opts Options) (*View, error) {
 		"--user-data-dir=" + profile,
 		"--disk-cache-dir=" + opts.CacheDir,
 		"--class=ZealishWhatsApp",
+		"--ozone-platform=x11",
 		"--load-extension=" + filepath.Join(profile, "title-extension"),
 		"--no-first-run",
 		"--no-default-browser-check",
