@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Handlers receives events from the browser adapter.
@@ -100,6 +101,7 @@ func (v *View) Run() int {
 	if err := v.cmd.Start(); err != nil {
 		return 1
 	}
+	go v.setWindowTitle()
 	err := v.cmd.Wait()
 	v.mu.Lock()
 	v.visible = false
@@ -171,6 +173,16 @@ func (v *View) isQuitting() bool {
 	return v.quitting
 }
 
+func (v *View) setWindowTitle() {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := v.windowCommand("set_window", "--name", "WhatsApp"); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (v *View) windowCommand(args ...string) error {
 	windowID, err := exec.Command("xdotool", "search", "--class", "ZealishWhatsApp").Output()
 	if err != nil {
@@ -180,9 +192,14 @@ func (v *View) windowCommand(args ...string) error {
 	if len(id) == 0 {
 		return errors.New("webview: Chrome window not found")
 	}
-	command := append([]string{"xdotool", "window" + args[0], id[0]}, args[1:]...)
-	if args[0] == "key" {
+	var command []string
+	switch args[0] {
+	case "key":
 		command = []string{"xdotool", "key", "--window", id[0], args[1]}
+	case "set_window":
+		command = []string{"xdotool", "set_window", "--name", args[2], id[0]}
+	default:
+		command = append([]string{"xdotool", args[0], id[0]}, args[1:]...)
 	}
 	return exec.Command(command[0], command[1:]...).Run()
 }
